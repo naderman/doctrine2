@@ -298,6 +298,89 @@ class ObjectHydratorTest extends HydrationTestCase
     }
 
     /**
+     * select g.id, u.id, u.status, count(p.phonenumber) numPhones from Group
+     * g join g.user u join u.phonenumbers p group by g.id, u.status, u.id
+     * =
+     * select a.id, u.id, u.status, count(p.phonenumber) as p__0 from GROUPS g
+     * INNER JOIN USERS u ON a.user = u.id INNER JOIN PHONENUMBERS p ON u.id =
+     * p.user_id group by g.id, u.id, u.status
+     */
+    public function testMixedQueryMultipleJoin()
+    {
+        $rsm = new ResultSetMapping;
+        $rsm->addEntityResult('Doctrine\Tests\Models\CMS\CmsGroup', 'g');
+        $rsm->addJoinedEntityResult(
+                'Doctrine\Tests\Models\CMS\CmsUser',
+                'u',
+                'g',
+                'users'
+        );
+        $rsm->addFieldResult('g', 'g__id', 'id');
+        $rsm->addFieldResult('u', 'u__id', 'id');
+        $rsm->addFieldResult('u', 'u__status', 'status');
+        $rsm->addScalarResult('sclr0', 'numPhones');
+
+        // Faked result set
+        $resultSet = array(
+            //row1
+            array(
+                'g__id' => '1',
+                'u__id' => '1',
+                'u__status' => 'developer',
+                'sclr0' => '2',
+                ),
+            array(
+                'g__id' => '1',
+                'u__id' => '2',
+                'u__status' => 'developer',
+                'sclr0' => '1',
+                ),
+            array(
+                'g__id' => '2',
+                'u__id' => '3',
+                'u__status' => 'developer',
+                'sclr0' => '3',
+                ),
+            );
+
+        $stmt = new HydratorMockStatement($resultSet);
+        $hydrator = new \Doctrine\ORM\Internal\Hydration\ObjectHydrator($this->_em);
+
+        $result = $hydrator->hydrateAll($stmt, $rsm, array(Query::HINT_FORCE_PARTIAL_LOAD => true));
+
+        $this->assertTrue(is_array($result));
+        $this->assertEquals(2, count($result));
+
+        $this->assertTrue(is_array($result[0]));
+        $this->assertTrue(is_array($result[1]));
+
+        // one group and an array of scalar values in each row
+        $this->assertEquals(2, count($result[0]));
+        $this->assertEquals(2, count($result[1]));
+
+        $this->assertTrue($result[0][0] instanceof \Doctrine\Tests\Models\CMS\CmsGroup);
+        $this->assertTrue($result[1][0] instanceof \Doctrine\Tests\Models\CMS\CmsGroup);
+
+        $this->assertEquals(2, count($result[0][0]->users));
+        $this->assertEquals(1, count($result[1][0]->users));
+
+        $this->assertTrue(is_array($result[0]['numPhones']));
+        $this->assertTrue(is_array($result[1]['numPhones']));
+        $this->assertEquals(2, count($result[0]['numPhones']));
+        $this->assertEquals(1, count($result[1]['numPhones']));
+
+        // first user in first group => 2 phonenumbers
+        $this->assertTrue($result[0][0]->users[0] instanceof \Doctrine\Tests\Models\CMS\CmsUser);
+        $this->assertEquals(2, $result[0]['numPhones'][0]);
+        // second user in first group => 1 phonenumber
+        $this->assertTrue($result[0][0]->users[1] instanceof \Doctrine\Tests\Models\CMS\CmsUser);
+        $this->assertEquals(1, $result[0]['numPhones'][1]);
+        // third user in second group => 3 phonenumbers
+        $this->assertTrue($result[1][0]->users[0] instanceof \Doctrine\Tests\Models\CMS\CmsUser);
+        $this->assertEquals(3, $result[1]['numPhones'][0]);
+    }
+
+    /**
      * select u.id, u.status, upper(u.name) nameUpper from User u index by u.id
      * join u.phonenumbers p indexby p.phonenumber
      * =
